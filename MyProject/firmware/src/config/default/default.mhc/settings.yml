@@ -1,0 +1,14 @@
+format_version: v1.0
+configName: default
+folderName: cantest
+frameworkPath: C:\Users\Jaagup\Desktop\Krakul\clevon\MPLAB_GITEE
+processor: ATSAME51J20A
+projectName: cantest
+settings:
+  PackageFilter: ''
+  FORCE_OPTIMIZATION: 'false'
+  GENERATE_BACKUP: 'true'
+  TRUSTZONE: 'false'
+  CMSISPath: dev_packs\arm\CMSIS\5.8.0
+  MERGE_STRATEGY: USER_ALL
+  DFPPath: dev_packs\Microchip\SAME51_DFP\3.6.130\atdf\ATSAME51J20A.atdf
