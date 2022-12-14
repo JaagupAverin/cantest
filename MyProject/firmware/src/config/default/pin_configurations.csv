@@ -25,8 +25,8 @@
 28,PB15,,Available,,,,,,NORMAL
 29,PA12,,Available,,,,,,NORMAL
 30,PA13,,Available,,,,,,NORMAL
-31,PA14,LED0,LED_AL,Digital,Out,High,,,NORMAL
-32,PA15,SW0,SWITCH_AL,Digital,In,n/a,Yes,No,NORMAL
+31,PA14,,Available,,,,,,NORMAL
+32,PA15,,Available,,,,,,NORMAL
 35,PA16,,Available,,,,,,NORMAL
 36,PA17,,Available,,,,,,NORMAL
 37,PA18,,Available,,,,,,NORMAL

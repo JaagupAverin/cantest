@@ -3,20 +3,25 @@
 #include <stdlib.h>                     // Defines EXIT_FAILURE
 #include "definitions.h"                // SYS function prototypes
 
-uint8_t Can1MessageRAM[CAN1_MESSAGE_RAM_CONFIG_SIZE] __attribute__((aligned (32)));
-
 /* Standard identifier id[28:18]*/
 #define WRITE_ID(id) (id << 18)
 #define READ_ID(id)  (id >> 18)
 
-static uint32_t status = 0;
-static uint8_t loop_count = 0;
-static uint8_t user_input = 0;
+#define CAN0_ID   0x000
+#define CAN1_ID   0x100
+#define KVASER_ID 0x200
 
-static uint8_t txFiFo[CAN1_TX_FIFO_BUFFER_SIZE];
-static uint8_t rxFiFo0[CAN1_RX_FIFO0_SIZE];
-static uint8_t rxFiFo1[CAN1_RX_FIFO1_SIZE];
-static uint8_t rxBuffer[CAN1_RX_BUFFER_SIZE];
+uint8_t Can0MessageRAM[CAN0_MESSAGE_RAM_CONFIG_SIZE] __attribute__((aligned (32)));
+static uint8_t Can0txFiFo[CAN0_TX_FIFO_BUFFER_SIZE];
+static uint8_t Can0rxFiFo0[CAN0_RX_FIFO0_SIZE];
+static uint8_t Can0rxFiFo1[CAN0_RX_FIFO1_SIZE];
+static uint8_t Can0rxBuffer[CAN0_RX_BUFFER_SIZE];
+
+uint8_t Can1MessageRAM[CAN1_MESSAGE_RAM_CONFIG_SIZE] __attribute__((aligned (32)));
+static uint8_t Can1txFiFo[CAN1_TX_FIFO_BUFFER_SIZE];
+static uint8_t Can1rxFiFo0[CAN1_RX_FIFO0_SIZE];
+static uint8_t Can1rxFiFo1[CAN1_RX_FIFO1_SIZE];
+static uint8_t Can1rxBuffer[CAN1_RX_BUFFER_SIZE];
 
 // *****************************************************************************
 // *****************************************************************************
@@ -24,7 +29,12 @@ static uint8_t rxBuffer[CAN1_RX_BUFFER_SIZE];
 // *****************************************************************************
 // *****************************************************************************
 
-/* Message Length to Data length code */
+static void printCAN1Status() {
+    uint32_t errorStatus = CAN1_REGS->CAN_PSR;
+    uint32_t act = (errorStatus & CAN_PSR_ACT_Msk) >> CAN_PSR_ACT_Pos;
+    printf("ACT: %lu, BRP: %lu\n", act, CAN1_REGS->CAN_TXBRP);
+}
+
 static uint8_t CANLengthToDlcGet(uint8_t length)
 {
     uint8_t dlc = 0;
@@ -64,7 +74,6 @@ static uint8_t CANLengthToDlcGet(uint8_t length)
     return dlc;
 }
 
-/* Data length code to Message Length */
 static uint8_t CANDlcToLengthGet(uint8_t dlc)
 {
     uint8_t msgLength[] = {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 12U, 16U, 20U, 24U, 32U, 48U, 64U};
@@ -76,44 +85,10 @@ static void display_menu(void)
 {
 	printf("Menu :\r\n"
 	       "  -- Select the action:\r\n"
-	       "  0: Send FD standard message with ID: 0x45A and 64 byte data 0 to 63. \r\n"
-	       "  1: Send FD standard message with ID: 0x469 and 64 byte data 128 to 191. \r\n"
-	       "  2: Send FD extended message with ID: 0x100000A5 and 64 byte data 0 to 63. \r\n"
-	       "  3: Send FD extended message with ID: 0x10000096 and 64 byte data 128 to 191. \r\n"
-	       "  4: Send normal standard message with ID: 0x469 and 8 byte data 0 to 7. \r\n"
+	       "  0: Send Can0 FD standard message \r\n"
+	       "  1: Send Can1 FD standard message \r\n"
+	       "  2: Toggle Can0 TX mode \r\n"
 	       "  m: Display menu \r\n\r\n");
-}
-
-/* Print Rx Message */
-static void print_message(uint8_t numberOfMessage, CAN_RX_BUFFER *rxBuf, uint8_t rxBufLen, uint8_t rxFifoBuf)
-{
-    uint8_t length = 0;
-    uint8_t msgLength = 0;
-    uint32_t id = 0;
-
-    if (rxFifoBuf == 0)
-        printf(" Rx FIFO0 :");
-    else if (rxFifoBuf == 1)
-        printf(" Rx FIFO1 :");
-    else if (rxFifoBuf == 2)
-        printf(" Rx Buffer :");
-
-    for (uint8_t count = 0; count < numberOfMessage; count++)
-    {
-        /* Print message to Console */
-        printf(" New Message Received\r\n");
-        id = rxBuf->xtd ? rxBuf->id : READ_ID(rxBuf->id);
-        msgLength = CANDlcToLengthGet(rxBuf->dlc);
-        length = msgLength;
-        printf(" Message - ID : 0x%x Length : 0x%x ", (unsigned int)id, (unsigned int)msgLength);
-        printf("Message : ");
-        while(length)
-        {
-            printf("0x%x ", rxBuf->data[msgLength - length--]);
-        }
-        printf("\r\n");
-        rxBuf += rxBufLen;
-    }
 }
 
 // *****************************************************************************
@@ -122,242 +97,326 @@ static void print_message(uint8_t numberOfMessage, CAN_RX_BUFFER *rxBuf, uint8_t
 // *****************************************************************************
 // *****************************************************************************
 
+void handleCan0Rx();
+void handleCan1Rx();
+
+void Can0Tx(unsigned int id, uint8_t len, uint8_t* data);
+void Can1Tx(unsigned int id, uint8_t len, uint8_t* data);
+
+bool tx_mode = false;
+uint64_t tx_i = 0;
+uint8_t tx_bfr[8];
+
 int main ( void )
 {
-    CAN_TX_BUFFER *txBuffer = NULL;
-    uint8_t        bufferNumber = 0;
-    uint8_t        numberOfMessage = 0;
-
-    /* Initialize all modules */
     SYS_Initialize ( NULL );
-
-    printf(" ------------------------------ \r\n");
-    printf("            CAN FD Demo          \r\n");
-    printf(" ------------------------------ \r\n");
     
     /* Set Message RAM Configuration */
+    CAN0_MessageRAMConfigSet(Can0MessageRAM);
     CAN1_MessageRAMConfigSet(Can1MessageRAM);
 
     display_menu();
      
     while ( true )
     {
-        /* Rx Buffers */
-        if (CAN1_InterruptGet(CAN_INTERRUPT_DRX_MASK))
-        {    
-            CAN1_InterruptClear(CAN_INTERRUPT_DRX_MASK);
-
-            /* Check CAN Status */
-            status = CAN1_ErrorGet();
-
-            if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
-            {
-                if (CAN1_RxBufferNumberGet(&bufferNumber))
-                {
-                    memset(rxBuffer, 0x00, CAN1_RX_BUFFER_ELEMENT_SIZE);
-                    if (CAN1_MessageReceive(bufferNumber, (CAN_RX_BUFFER *)rxBuffer) == true)
-                    {
-                        print_message(1, (CAN_RX_BUFFER *)rxBuffer, CAN1_RX_BUFFER_ELEMENT_SIZE, 2);
-                    }
-                    else
-                    {
-                        printf(" Error in received message\r\n");
-                    }
-                }
-            }
-            else
-            {
-                printf(" Error in received message\r\n");
-            }
+        // Prevent the bus from being overrun:
+        uint8_t can0_tx_available = CAN0_REGS->CAN_TXFQS & CAN_TXFQS_TFFL_Msk >> CAN_TXFQS_TFFL_Pos;
+        uint8_t can1_tx_available = CAN1_REGS->CAN_TXFQS & CAN_TXFQS_TFFL_Msk >> CAN_TXFQS_TFFL_Pos;
+        bool tx_ready = can0_tx_available > 4 && can1_tx_available > 4;
+        if (tx_mode && tx_ready) {
+            Can0Tx(CAN1_ID, 8, (uint8_t*)&tx_i);
+            ++tx_i;
         }
-
-        /* Rx FIFO0 */
-        if (CAN1_InterruptGet(CAN_INTERRUPT_RF0N_MASK))
-        {    
-            CAN1_InterruptClear(CAN_INTERRUPT_RF0N_MASK);
-
-            /* Check CAN Status */
-            status = CAN1_ErrorGet();
-
-            if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
-            {
-                numberOfMessage = CAN1_RxFifoFillLevelGet(CAN_RX_FIFO_0);
-                if (numberOfMessage != 0)
-                {
-                    memset(rxFiFo0, 0x00, (numberOfMessage * CAN1_RX_FIFO0_ELEMENT_SIZE));
-                    if (CAN1_MessageReceiveFifo(CAN_RX_FIFO_0, numberOfMessage, (CAN_RX_BUFFER *)rxFiFo0) == true)
-                    {
-                        print_message(numberOfMessage, (CAN_RX_BUFFER *)rxFiFo0, CAN1_RX_FIFO0_ELEMENT_SIZE, 0);
-                    }
-                    else
-                    {
-                        printf(" Error in received message\r\n");
-                    }
-                }
-            }
-            else
-            {
-                printf(" Error in received message\r\n");
-            }
-        }
-
-        /* Rx FIFO1 */
-        if (CAN1_InterruptGet(CAN_INTERRUPT_RF1N_MASK))
-        {    
-            CAN1_InterruptClear(CAN_INTERRUPT_RF1N_MASK);
-
-            /* Check CAN Status */
-            status = CAN1_ErrorGet();
-
-            if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
-            {
-                numberOfMessage = CAN1_RxFifoFillLevelGet(CAN_RX_FIFO_1);
-                if (numberOfMessage != 0)
-                {
-                    memset(rxFiFo1, 0x00, (numberOfMessage * CAN1_RX_FIFO1_ELEMENT_SIZE));
-                    if (CAN1_MessageReceiveFifo(CAN_RX_FIFO_1, numberOfMessage, (CAN_RX_BUFFER *)rxFiFo1) == true)
-                    {
-                        print_message(numberOfMessage, (CAN_RX_BUFFER *)rxFiFo1, CAN1_RX_FIFO1_ELEMENT_SIZE, 1);
-                    }
-                    else
-                    {
-                        printf(" Error in received message\r\n");
-                    }
-                }
-            }
-            else
-            {
-                printf(" Error in received message\r\n");
-            }
-        }
+        
+        handleCan0Rx();
+        handleCan1Rx();
 
         /* User input */
         if (SERCOM5_USART_ReceiverIsReady() == false)
         {
             continue;
         }
-        user_input = (uint8_t)SERCOM5_USART_ReadByte();
-
+        uint8_t user_input = (uint8_t)SERCOM5_USART_ReadByte();
+        printf("\r\n");
         switch (user_input)
         {
             case '0':
-                memset(txFiFo, 0x00, CAN0_TX_FIFO_BUFFER_ELEMENT_SIZE);
-                txBuffer = (CAN_TX_BUFFER *)txFiFo;
-                txBuffer->id = WRITE_ID(0x45A);
-                txBuffer->dlc = CANLengthToDlcGet(64);
-                txBuffer->fdf = 1;
-                txBuffer->brs = 1;
-                for (loop_count = 0; loop_count < 64; loop_count++){
-                    txBuffer->data[loop_count] = loop_count;
-                }                
-                printf("  0: Send FD standard message with ID: 0x45A and 64 byte data 0 to 63.\r\n");
-                if (CAN0_MessageTransmitFifo(1, txBuffer) == true)
-                {    
-                    printf(" Success \r\n");
-                }
-                else
-                {
-                    printf(" Failed \r\n");
-                }             
+                Can0Tx(KVASER_ID, 6, (uint8_t*)"Hello");
+                printCAN1Status();
                 break;  
             case '1':
-                memset(txFiFo, 0x00, CAN0_TX_FIFO_BUFFER_ELEMENT_SIZE);
-                txBuffer = (CAN_TX_BUFFER *)txFiFo;
-                txBuffer->id = WRITE_ID(0x469);
-                txBuffer->dlc = CANLengthToDlcGet(64);
-                txBuffer->fdf = 1;
-                txBuffer->brs = 1;
-                for (loop_count = 128; loop_count < 192; loop_count++){
-                    txBuffer->data[loop_count - 128] = loop_count;
-                }                
-                printf("  1: Send FD standard message with ID: 0x469 and 64 byte data 128 to 191.\r\n");
-                if (CAN0_MessageTransmitFifo(1, txBuffer) == true)
-                {    
-                    printf(" Success \r\n");
-                }
-                else
-                {
-                    printf(" Failed \r\n");
-                }    
+                Can1Tx(KVASER_ID, 6, (uint8_t*)"World");
+                printCAN1Status();
                 break;
-            case '2': 
-                memset(txFiFo, 0x00, CAN0_TX_FIFO_BUFFER_ELEMENT_SIZE);
-                txBuffer = (CAN_TX_BUFFER *)txFiFo;
-                txBuffer->id = 0x100000A5;
-                txBuffer->dlc = CANLengthToDlcGet(64);
-                txBuffer->xtd = 1;
-                txBuffer->fdf = 1;
-                txBuffer->brs = 1;
-                for (loop_count = 0; loop_count < 64; loop_count++){
-                    txBuffer->data[loop_count] = loop_count;
-                }
-                printf("  2: Send FD extended message with ID: 0x100000A5 and 64 byte data 0 to 63.\r\n");
-                if (CAN0_MessageTransmitFifo(1, txBuffer) == true)
-                {    
-                    printf(" Success \r\n");
-                }
-                else
-                {
-                    printf(" Failed \r\n");
-                }             
-                break;
-            case '3':
-                memset(txFiFo, 0x00, CAN0_TX_FIFO_BUFFER_ELEMENT_SIZE);
-                txBuffer = (CAN_TX_BUFFER *)txFiFo;
-                txBuffer->id = 0x10000096;
-                txBuffer->dlc = CANLengthToDlcGet(64);
-                txBuffer->xtd = 1;
-                txBuffer->fdf = 1;
-                txBuffer->brs = 1;
-                for (loop_count = 128; loop_count < 192; loop_count++){
-                    txBuffer->data[loop_count - 128] = loop_count;
-                }
-                printf("  3: Send FD extended message with ID: 0x10000096 and 64 byte data 128 to 191.\r\n");
-                if (CAN0_MessageTransmitFifo(1, txBuffer) == true)
-                {    
-                    printf(" Success \r\n");
-                }
-                else
-                {
-                    printf(" Failed \r\n");
-                }             
-                break;
-            
-            case '4':
-                memset(txFiFo, 0x00, CAN0_TX_FIFO_BUFFER_ELEMENT_SIZE);
-                txBuffer = (CAN_TX_BUFFER *)txFiFo;
-                txBuffer->id = WRITE_ID(0x469);
-                txBuffer->dlc = 8;
-                for (loop_count = 0; loop_count < 8; loop_count++){
-                    txBuffer->data[loop_count] = loop_count;
-                }                
-                printf("  4: Send normal standard message with ID: 0x469 and 8 byte data 0 to 7.\r\n");
-                if (CAN0_MessageTransmitFifo(1, txBuffer) == true)
-                {    
-                    printf(" Success \r\n");
-                }
-                else
-                {
-                    printf(" Failed \r\n");
-                }             
+            case '2':
+                tx_mode = !tx_mode;
+                tx_i = 0;
+                printf("TX mode toggled\r\n");
                 break;                 
-
             case 'm':
             case 'M':
                 display_menu();
                 break;
-                
             default:
                 printf(" Invalid Input \r\n");
                 break;
         }  
     }
-
-    /* Execution should not come here during normal operation */
-
     return ( EXIT_FAILURE );
 }
 
+// Modifies frame content and forwards to CAN1
+void Can0HandleMessages(uint8_t numberOfMessages, CAN_RX_BUFFER* rxBuf, uint8_t rxBufLen)
+{
+    for (uint8_t i= 0; i < numberOfMessages; i++)
+    {
+        //printf(" Can0Rx\r\n");
+        uint8_t msgLength = CANDlcToLengthGet(rxBuf->dlc);
+        uint8_t length = msgLength;
+        ++rxBuf->data[length - 1];
+        Can0Tx(CAN1_ID, length, rxBuf->data);
+        rxBuf += rxBufLen;
+    }
+}
+
+// Modifies frame and forwards frame back to Kvaser
+void Can1HandleMessages(uint8_t numberOfMessages, CAN_RX_BUFFER* rxBuf, uint8_t rxBufLen)
+{
+    for (uint8_t i= 0; i < numberOfMessages; i++)
+    {
+        //printf(" Can1Rx\r\n");
+        uint8_t msgLength = CANDlcToLengthGet(rxBuf->dlc);
+        uint8_t length = msgLength;
+        ++rxBuf->data[length - 1];
+        Can1Tx(KVASER_ID, length, rxBuf->data);
+        rxBuf += rxBufLen;
+    }
+}
+
+void handleCan0Rx() {
+    uint8_t bufferNumber = 0;
+    uint8_t numberOfMessage = 0;
+    CAN_ERROR status = 0;
+    
+    if (CAN0_InterruptGet(CAN_INTERRUPT_DRX_MASK))
+    {    
+        CAN0_InterruptClear(CAN_INTERRUPT_DRX_MASK);
+
+        /* Check CAN Status */
+        status = CAN0_ErrorGet();
+
+        if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
+        {
+            if (CAN0_RxBufferNumberGet(&bufferNumber))
+            {
+                memset(Can0rxBuffer, 0x00, CAN0_RX_BUFFER_ELEMENT_SIZE);
+                if (CAN0_MessageReceive(bufferNumber, (CAN_RX_BUFFER *)Can0rxBuffer) == true)
+                {
+                    Can0HandleMessages(1, (CAN_RX_BUFFER *)Can0rxBuffer, CAN0_RX_BUFFER_ELEMENT_SIZE);
+                }
+                else
+                {
+                    printf(" Error in received message\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf(" Error in received message\r\n");
+        }
+    }
+
+    /* Rx FIFO0 */
+    if (CAN0_InterruptGet(CAN_INTERRUPT_RF0N_MASK))
+    {    
+        CAN0_InterruptClear(CAN_INTERRUPT_RF0N_MASK);
+
+        /* Check CAN Status */
+        status = CAN0_ErrorGet();
+
+        if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
+        {
+            numberOfMessage = CAN0_RxFifoFillLevelGet(CAN_RX_FIFO_0);
+            if (numberOfMessage != 0)
+            {
+                memset(Can0rxFiFo0, 0x00, (numberOfMessage * CAN0_RX_FIFO0_ELEMENT_SIZE));
+                if (CAN0_MessageReceiveFifo(CAN_RX_FIFO_0, numberOfMessage, (CAN_RX_BUFFER *)Can0rxFiFo0) == true)
+                {
+                    Can0HandleMessages(numberOfMessage, (CAN_RX_BUFFER *)Can0rxFiFo0, CAN0_RX_FIFO0_ELEMENT_SIZE);
+                }
+                else
+                {
+                    printf(" Error in received message\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf(" Error in received message\r\n");
+        }
+    }
+
+    /* Rx FIFO1 */
+    if (CAN0_InterruptGet(CAN_INTERRUPT_RF1N_MASK))
+    {    
+        CAN0_InterruptClear(CAN_INTERRUPT_RF1N_MASK);
+
+        /* Check CAN Status */
+        status = CAN0_ErrorGet();
+
+        if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
+        {
+            numberOfMessage = CAN0_RxFifoFillLevelGet(CAN_RX_FIFO_1);
+            if (numberOfMessage != 0)
+            {
+                memset(Can0rxFiFo1, 0x00, (numberOfMessage * CAN0_RX_FIFO1_ELEMENT_SIZE));
+                if (CAN0_MessageReceiveFifo(CAN_RX_FIFO_1, numberOfMessage, (CAN_RX_BUFFER *)Can0rxFiFo1) == true)
+                {
+                    Can0HandleMessages(numberOfMessage, (CAN_RX_BUFFER *)Can0rxFiFo1, CAN0_RX_FIFO1_ELEMENT_SIZE);
+                }
+                else
+                {
+                    printf(" Error in received message\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf(" Error in received message\r\n");
+        }
+    }
+}
+
+void handleCan1Rx() {
+    uint8_t bufferNumber = 0;
+    uint8_t numberOfMessage = 0;
+    CAN_ERROR status = 0;
+
+    if (CAN1_InterruptGet(CAN_INTERRUPT_DRX_MASK))
+    {    
+        CAN1_InterruptClear(CAN_INTERRUPT_DRX_MASK);
+
+        /* Check CAN Status */
+        status = CAN1_ErrorGet();
+
+        if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
+        {
+            if (CAN1_RxBufferNumberGet(&bufferNumber))
+            {
+                memset(Can1rxBuffer, 0x00, CAN1_RX_BUFFER_ELEMENT_SIZE);
+                if (CAN1_MessageReceive(bufferNumber, (CAN_RX_BUFFER *)Can1rxBuffer) == true)
+                {
+                    Can1HandleMessages(1, (CAN_RX_BUFFER *)Can1rxBuffer, CAN1_RX_BUFFER_ELEMENT_SIZE);
+                }
+                else
+                {
+                    printf(" Error in received message\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf(" Error in received message\r\n");
+        }
+    }
+
+    /* Rx FIFO0 */
+    if (CAN1_InterruptGet(CAN_INTERRUPT_RF0N_MASK))
+    {    
+        CAN1_InterruptClear(CAN_INTERRUPT_RF0N_MASK);
+
+        /* Check CAN Status */
+        status = CAN1_ErrorGet();
+
+        if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
+        {
+            numberOfMessage = CAN1_RxFifoFillLevelGet(CAN_RX_FIFO_0);
+            if (numberOfMessage != 0)
+            {
+                memset(Can1rxFiFo0, 0x00, (numberOfMessage * CAN1_RX_FIFO0_ELEMENT_SIZE));
+                if (CAN1_MessageReceiveFifo(CAN_RX_FIFO_0, numberOfMessage, (CAN_RX_BUFFER *)Can1rxFiFo0) == true)
+                {
+                    Can1HandleMessages(numberOfMessage, (CAN_RX_BUFFER *)Can1rxFiFo0, CAN1_RX_FIFO0_ELEMENT_SIZE);
+                }
+                else
+                {
+                    printf(" Error in received message\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf(" Error in received message\r\n");
+        }
+    }
+
+    /* Rx FIFO1 */
+    if (CAN1_InterruptGet(CAN_INTERRUPT_RF1N_MASK))
+    {    
+        CAN1_InterruptClear(CAN_INTERRUPT_RF1N_MASK);
+
+        /* Check CAN Status */
+        status = CAN1_ErrorGet();
+
+        if (((status & CAN_PSR_LEC_Msk) == CAN_ERROR_NONE) || ((status & CAN_PSR_LEC_Msk) == CAN_ERROR_LEC_NC))
+        {
+            numberOfMessage = CAN1_RxFifoFillLevelGet(CAN_RX_FIFO_1);
+            if (numberOfMessage != 0)
+            {
+                memset(Can1rxFiFo1, 0x00, (numberOfMessage * CAN1_RX_FIFO1_ELEMENT_SIZE));
+                if (CAN1_MessageReceiveFifo(CAN_RX_FIFO_1, numberOfMessage, (CAN_RX_BUFFER *)Can1rxFiFo1) == true)
+                {
+                    Can1HandleMessages(numberOfMessage, (CAN_RX_BUFFER *)Can1rxFiFo1, CAN1_RX_FIFO1_ELEMENT_SIZE);
+                }
+                else
+                {
+                    printf(" Error in received message\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf(" Error in received message\r\n");
+        }
+    }
+}
+
+void Can0Tx(unsigned int id, uint8_t len, uint8_t* data) {
+    CAN_TX_BUFFER *txBuffer = NULL;
+
+    memset(Can0txFiFo, 0x00, CAN0_TX_FIFO_BUFFER_ELEMENT_SIZE);
+    txBuffer = (CAN_TX_BUFFER *)Can0txFiFo;
+    txBuffer->id = WRITE_ID(id);
+    txBuffer->dlc = CANLengthToDlcGet(len);
+    txBuffer->fdf = 1;
+    txBuffer->brs = 1;
+    for (int i = 0; i < len; i++){
+        txBuffer->data[i] = data[i];
+    }                
+    if (CAN0_MessageTransmitFifo(1, txBuffer) == false)
+    {
+        printf(" Can0Tx Failed \r\n");
+    }   
+}
+
+void Can1Tx(unsigned int id, uint8_t len, uint8_t* data) {
+    CAN_TX_BUFFER *txBuffer = NULL;
+
+    memset(Can1txFiFo, 0x00, CAN1_TX_FIFO_BUFFER_ELEMENT_SIZE);
+    txBuffer = (CAN_TX_BUFFER *)Can1txFiFo;
+    txBuffer->id = WRITE_ID(id);
+    txBuffer->dlc = CANLengthToDlcGet(len);
+    txBuffer->fdf = 1;
+    txBuffer->brs = 1;
+    for (int i = 0; i < len; i++){
+        txBuffer->data[i] = data[i];
+    }                
+
+    if (CAN1_MessageTransmitFifo(1, txBuffer) == false)
+    {
+        printf(" Can1Tx Failed \r\n");
+    }         
+}
 
 /*******************************************************************************
  End of File

@@ -106,7 +106,6 @@ build/default/production/_ext/163028504/xc32_monitor.o: \
  ../src/config/default/device_cache.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/packs/CMSIS/CMSIS/Core/Include/cmsis_compiler.h \
- ../src/config/default/bsp/bsp.h \
  ../src/config/default/peripheral/evsys/plib_evsys.h \
  ../src/config/default/peripheral/can/plib_can1.h \
  ../src/config/default/peripheral/can/plib_can_common.h \
@@ -360,8 +359,6 @@ build/default/production/_ext/163028504/xc32_monitor.o: \
 ../src/config/default/toolchain_specifics.h:
 
 ../src/packs/CMSIS/CMSIS/Core/Include/cmsis_compiler.h:
-
-../src/config/default/bsp/bsp.h:
 
 ../src/config/default/peripheral/evsys/plib_evsys.h:
 

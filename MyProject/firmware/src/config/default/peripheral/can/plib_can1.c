@@ -66,8 +66,8 @@ static const can_sidfe_registers_t can1StdFilter[] =
 {
     {
         .CAN_SIDFE_0 = CAN_SIDFE_0_SFT(0UL) |
-                  CAN_SIDFE_0_SFID1(0x0UL) |
-                  CAN_SIDFE_0_SFID2(0x0UL) |
+                  CAN_SIDFE_0_SFID1(0x100UL) |
+                  CAN_SIDFE_0_SFID2(0x1ffUL) |
                   CAN_SIDFE_0_SFEC(1UL)
     },
 };
@@ -105,19 +105,27 @@ void CAN1_Initialize(void)
     /* Set CCE to unlock the configuration registers */
     CAN1_REGS->CAN_CCCR |= CAN_CCCR_CCE_Msk;
 
-    /* Set Nominal Bit timing and Prescaler Register */
-    CAN1_REGS->CAN_NBTP  = CAN_NBTP_NTSEG2(59UL) | CAN_NBTP_NTSEG1(58UL) | CAN_NBTP_NBRP(0UL) | CAN_NBTP_NSJW(3UL);
+    /* Set Data Bit Timing and Prescaler Register */
+    CAN1_REGS->CAN_DBTP = CAN_DBTP_DTSEG2(2UL) | CAN_DBTP_DTSEG1(10UL) | CAN_DBTP_DBRP(0UL) | CAN_DBTP_DSJW(1UL);
 
+    /* Set Nominal Bit timing and Prescaler Register */
+    CAN1_REGS->CAN_NBTP  = CAN_NBTP_NTSEG2(23UL) | CAN_NBTP_NTSEG1(94UL) | CAN_NBTP_NBRP(0UL) | CAN_NBTP_NSJW(3UL);
+
+    /* Receive Buffer / FIFO Element Size Configuration Register */
+    CAN1_REGS->CAN_RXESC = 0UL  | CAN_RXESC_F0DS(7UL) | CAN_RXESC_F1DS(7UL) | CAN_RXESC_RBDS(7UL);
     /*lint -e{9048} PC lint incorrectly reports a missing 'U' Suffix */
     CAN1_REGS->CAN_NDAT1 = CAN_NDAT1_Msk;
     /*lint -e{9048} PC lint incorrectly reports a missing 'U' Suffix */
     CAN1_REGS->CAN_NDAT2 = CAN_NDAT2_Msk;
 
+    /* Transmit Buffer/FIFO Element Size Configuration Register */
+    CAN1_REGS->CAN_TXESC = CAN_TXESC_TBDS(7UL);
 
     /* Global Filter Configuration Register */
-    CAN1_REGS->CAN_GFC = CAN_GFC_ANFS_RXF0 | CAN_GFC_ANFE_REJECT;
+    CAN1_REGS->CAN_GFC = CAN_GFC_ANFS_REJECT | CAN_GFC_ANFE_REJECT;
 
     /* Set the operation mode */
+    CAN1_REGS->CAN_CCCR |= CAN_CCCR_FDOE_Msk | CAN_CCCR_BRSE_Msk;
 
 
     CAN1_REGS->CAN_CCCR &= ~CAN_CCCR_INIT_Msk;

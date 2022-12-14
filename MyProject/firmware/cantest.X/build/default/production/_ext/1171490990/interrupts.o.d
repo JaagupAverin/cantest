@@ -107,7 +107,7 @@ build/default/production/_ext/1171490990/interrupts.o: \
  ../src/config/default/device_vectors.h \
  ../src/config/default/interrupts.h ../src/config/default/definitions.h \
  ../src/config/default/peripheral/nvmctrl/plib_nvmctrl.h \
- ../src/config/default/device.h ../src/config/default/bsp/bsp.h \
+ ../src/config/default/device.h \
  ../src/config/default/peripheral/evsys/plib_evsys.h \
  ../src/config/default/peripheral/can/plib_can1.h \
  ../src/config/default/peripheral/can/plib_can_common.h \
@@ -369,8 +369,6 @@ build/default/production/_ext/1171490990/interrupts.o: \
 ../src/config/default/peripheral/nvmctrl/plib_nvmctrl.h:
 
 ../src/config/default/device.h:
-
-../src/config/default/bsp/bsp.h:
 
 ../src/config/default/peripheral/evsys/plib_evsys.h:
 

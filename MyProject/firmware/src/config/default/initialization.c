@@ -176,14 +176,12 @@ void SYS_Initialize ( void* data )
 
 
 
-	BSP_Initialize();
     EVSYS_Initialize();
 
+    CAN0_Initialize();
     CAN1_Initialize();
 
     SERCOM5_USART_Initialize();
-
-    CAN0_Initialize();
 
     RTC_Initialize();
 
